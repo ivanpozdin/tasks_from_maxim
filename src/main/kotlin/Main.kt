@@ -2,9 +2,9 @@ import reduce_list.reduceList
 import kotlin.system.measureTimeMillis
 
 val add = { a: Int, b: Int -> a + b }
-fun main(args: Array<String>) {
-    val size = 1000_0024
-    val myList = List(size) { index -> index }
+fun main() {
+    val size = 178_345_123
+    val myList = List(size){i -> i / 10}
 
     val stdRes: Int
     val stdReduceTime = measureTimeMillis {
@@ -16,7 +16,5 @@ fun main(args: Array<String>) {
     val myReduceTime = measureTimeMillis {
         myRes = reduceList(myList, add)
     }
-    println("My reduce fun time: $myReduceTime, res=$myRes")
-
-
+    println("My reduce fun time:  $myReduceTime, res=$myRes")
 }
