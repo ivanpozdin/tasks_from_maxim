@@ -4,20 +4,20 @@ import kotlinx.coroutines.*
 import kotlin.math.ceil
 import kotlin.math.min
 
-fun <T> reduceList(list: List<T>, operation: (acc: T, value: T) -> T): T {
-    if (list.isEmpty()) throw IllegalArgumentException("List must contain at least 1 element.")
-    if (list.size == 1) {
-        return list[0]
-    }
-    val elementsNumberForOneCoroutine = 10_000
-    var coroutinesNumber = ceil(list.size.toDouble() / elementsNumberForOneCoroutine.toDouble()).toInt()
+const val ELEMENTS_NUMBER_FOR_ONE_COROUTINE = 10_000
+
+fun <T> prepareCurrentAccumulators(
+    coroutinesNumber: Int,
+    list: List<T>,
+    operation: (acc: T, value: T) -> T
+): MutableList<T> {
     val accumulators = MutableList<T>(coroutinesNumber) { list[0] }
 
     runBlocking(Dispatchers.Default) {
         val coroutines = List(coroutinesNumber) { index ->
-            async{
-                val leftBound = index * elementsNumberForOneCoroutine
-                val rightBound = min(list.lastIndex, (index + 1) * elementsNumberForOneCoroutine - 1)
+            async {
+                val leftBound = index * ELEMENTS_NUMBER_FOR_ONE_COROUTINE
+                val rightBound = min(list.lastIndex, (index + 1) * ELEMENTS_NUMBER_FOR_ONE_COROUTINE - 1)
                 var acc = list[rightBound]
                 for (i in leftBound..<rightBound) {
                     acc = operation(acc, list[i])
@@ -25,30 +25,53 @@ fun <T> reduceList(list: List<T>, operation: (acc: T, value: T) -> T): T {
                 accumulators[index] = acc
             }
         }
-        coroutines.forEach{it.await()}
-       }
-    val previousAccumulators = accumulators.toMutableList()
+        coroutines.forEach { it.await() }
+    }
+    return accumulators
+}
 
-    while (coroutinesNumber > 1) {
-        val newCoroutinesNumber = ceil(coroutinesNumber.toDouble() / elementsNumberForOneCoroutine.toDouble()).toInt()
+data class Accumulators<T>(val current: MutableList<T>, val previous: MutableList<T>, var coroutinesNumber: Int)
+
+fun <T> reducePart(
+    index: Int, operation: (acc: T, value: T) -> T, accumulators: Accumulators<T>
+) {
+    val firstIndex = index * ELEMENTS_NUMBER_FOR_ONE_COROUTINE
+    val lastIndex = min(accumulators.coroutinesNumber - 1, (index + 1) * ELEMENTS_NUMBER_FOR_ONE_COROUTINE - 1)
+    var acc = accumulators.previous[lastIndex]
+    for (i in firstIndex..<lastIndex) {
+        acc = operation(acc, accumulators.previous[i])
+    }
+    accumulators.current[index] = acc
+}
+
+fun <T> copyToPrevious(accumulators: Accumulators<T>) {
+    for (i in 0..<accumulators.coroutinesNumber) {
+        accumulators.previous[i] = accumulators.current[i]
+    }
+}
+
+fun getCoroutinesNumber(elementsNumber: Int): Int {
+    return ceil(elementsNumber.toDouble() / ELEMENTS_NUMBER_FOR_ONE_COROUTINE.toDouble()).toInt()
+}
+
+fun <T> reduceList(list: List<T>, operation: (acc: T, value: T) -> T): T {
+    if (list.isEmpty()) throw IllegalArgumentException("List must contain at least 1 element.")
+    if (list.size == 1) {
+        return list[0]
+    }
+    val coroutinesNumber = getCoroutinesNumber(list.size)
+    val current = prepareCurrentAccumulators(coroutinesNumber, list, operation)
+    val accumulators = Accumulators(current, current.toMutableList(), coroutinesNumber)
+
+    while (accumulators.coroutinesNumber > 1) {
+        val newCoroutinesNumber = getCoroutinesNumber(accumulators.coroutinesNumber)
         runBlocking(Dispatchers.Default) {
-            val coroutines = List(newCoroutinesNumber) { index ->
-                async{
-                    val leftBound = index * elementsNumberForOneCoroutine
-                    val rightBound = min(coroutinesNumber - 1, (index + 1) * elementsNumberForOneCoroutine - 1)
-                    var acc = previousAccumulators[rightBound]
-                    for (i in leftBound..<rightBound) {
-                        acc = operation(acc, previousAccumulators[i])
-                    }
-                    accumulators[index] = acc
-                }
-            }
-            coroutines.forEach{it.await()}
-            coroutinesNumber = newCoroutinesNumber
-            for (i in 0..<coroutinesNumber) {
-                previousAccumulators[i] = accumulators[i]
-            }
+            List(newCoroutinesNumber) { index ->
+                async { reducePart(index, operation, accumulators) }
+            }.forEach { it.await() }
+            accumulators.coroutinesNumber = newCoroutinesNumber
+            copyToPrevious(accumulators)
         }
     }
-    return accumulators[0]
+    return accumulators.current[0]
 }
